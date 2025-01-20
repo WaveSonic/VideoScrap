@@ -9,6 +9,7 @@ from tkinter import filedialog
 from ttkbootstrap.constants import *
 from PIL import Image, ImageTk
 
+is_playing = False
 
 def calculate_distance(x1, y1, x2, y2):
     """Обчислення евклідової відстані."""
@@ -36,6 +37,8 @@ def video_reader(source, frame_queue, stop_event):
             print("Черга кадрів заповнена. Пропуск кадру.")
 
     cap.release()
+    global is_playing
+    is_playing = False
 
 
 def video_processor(frame_queue, stop_event, video_label):
@@ -156,7 +159,16 @@ def video_processor(frame_queue, stop_event, video_label):
 
 
 def start_tracking(video_source, video_label, right_frame):
-    """Запуск потоків для обробки відео."""
+    global is_playing, reader_thread, processor_thread, stop_event
+
+    if is_playing:
+        print("Відтворення вже запущено!")
+        return
+
+    if not video_source:
+        print("Будь ласка, виберіть файл відео.")
+        return
+
     frame_queue = queue.Queue(maxsize=20)
     stop_event = threading.Event()
 
@@ -177,12 +189,35 @@ def start_tracking(video_source, video_label, right_frame):
     right_frame.config(width=new_width, height=new_height)
     right_frame.pack_propagate(False)
 
+    is_playing = True
+
     # Запуск потоків
     reader_thread = threading.Thread(target=video_reader, args=(video_source, frame_queue, stop_event))
     processor_thread = threading.Thread(target=video_processor, args=(frame_queue, stop_event, video_label))
 
     reader_thread.start()
     processor_thread.start()
+
+
+def stop_video():
+    """Зупинка потоків для обробки відео."""
+    global is_playing, stop_event, reader_thread, processor_thread
+
+    if not is_playing:
+        print("Відео не запущене!")
+        return  # Нічого зупиняти
+
+    # Сигналізуємо потокам завершити роботу
+    stop_event.set()
+
+    # Чекаємо завершення потоків, якщо вони ще активні
+    if reader_thread.is_alive():
+        reader_thread.join(timeout=1)
+    if processor_thread.is_alive():
+        processor_thread.join(timeout=1)
+
+    is_playing = False  # Скидаємо прапорець
+    print("Відтворення відео зупинено.")
 
 
 def select_video_file(entry):
@@ -219,6 +254,14 @@ start_button = ttk.Button(
 )
 start_button.pack(side=LEFT, padx=5)
 
+stop_button = ttk.Button(
+    controls_frame,
+    text="Зупинити",
+    bootstyle="danger",
+    command=stop_video
+)
+stop_button.pack(side=LEFT, padx=5)
+
 # Головний поділ: зліва порожній простір, справа - медіаплеєр
 content_frame = ttk.Frame(main_frame)
 content_frame.pack(fill=BOTH, expand=True)
@@ -237,4 +280,3 @@ video_label = ttk.Label(right_frame)
 video_label.pack(fill=BOTH, expand=True)
 
 app.mainloop()
-
