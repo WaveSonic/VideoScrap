@@ -67,9 +67,6 @@ def video_processor(frame_queue, stop_event, video_label):
 
         frame_height, frame_width, _ = frame.shape
         scale = min(max_width / frame_width, max_height / frame_height, 1.0)
-        new_width = int(frame_width * scale)
-        new_height = int(frame_height * scale)
-        resized_frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
 
         # Оновлення розміру вікна
 
@@ -142,8 +139,8 @@ def video_processor(frame_queue, stop_event, video_label):
         resized_frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
 
         # Оновлюємо розмір плеєра під відео
-        right_frame.config(width=new_width, height=new_height)
-        right_frame.pack_propagate(False)
+        #right_frame.config(width=new_width, height=new_height)
+        #right_frame.pack_propagate(False)
 
         rgb_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
         img = ImageTk.PhotoImage(Image.fromarray(rgb_frame))
@@ -159,7 +156,7 @@ def video_processor(frame_queue, stop_event, video_label):
 
 
 def start_tracking(video_source, video_label, right_frame):
-    global is_playing, reader_thread, processor_thread, stop_event
+    global is_playing, reader_thread, processor_thread, stop_event, frame_queue
 
     if is_playing:
         print("Відтворення вже запущено!")
@@ -200,24 +197,40 @@ def start_tracking(video_source, video_label, right_frame):
 
 
 def stop_video():
-    """Зупинка потоків для обробки відео."""
-    global is_playing, stop_event, reader_thread, processor_thread
+    """Зупинка потоків і очищення відеоплеєра."""
+    global is_playing, stop_event, reader_thread, processor_thread, frame_queue
 
     if not is_playing:
         print("Відео не запущене!")
-        return  # Нічого зупиняти
+        return  # Якщо відео вже зупинене, нічого не робимо.
 
-    # Сигналізуємо потокам завершити роботу
-    stop_event.set()
+    # 1. Сигналізуємо потокам завершити роботу.
+    stop_event.set()  # Встановлюємо прапорець для завершення роботи потоків.
 
-    # Чекаємо завершення потоків, якщо вони ще активні
+    # 2. Негайно скидаємо зображення у віджеті.
+    video_label.config(image="")
+    video_label.image = None
+
+    # 4. Чекаємо завершення потоків.
     if reader_thread.is_alive():
-        reader_thread.join(timeout=1)
+        reader_thread.join(timeout=1)  # Очікуємо завершення потоку зчитування.
     if processor_thread.is_alive():
-        processor_thread.join(timeout=1)
+        processor_thread.join(timeout=1)  # Очікуємо завершення потоку обробки.
 
-    is_playing = False  # Скидаємо прапорець
+        # 3. Очищаємо чергу кадрів, щоб уникнути затримок.
+    with frame_queue.mutex:
+        frame_queue.queue.clear()  # Видаляємо всі кадри з черги.
+
+
+    # 5. Встановлюємо початковий розмір фрейма.
+    right_frame.config(width=200, height=200)  # Встановлюємо початкові розміри.
+    right_frame.pack_propagate(False)  # Фіксуємо розмір фрейма.
+
+    # 6. Скидаємо прапорець.
+    is_playing = False  # Скидаємо стан програвача.
+
     print("Відтворення відео зупинено.")
+
 
 
 def select_video_file(entry):
@@ -231,7 +244,7 @@ def select_video_file(entry):
 # Створення графічного інтерфейсу
 app = ttk.Window(themename="darkly")
 app.title("Відстеження об'єктів у відео")
-app.geometry("1200x800")
+app.geometry("1800x1000")
 
 # Головний контейнер
 main_frame = ttk.Frame(app)
@@ -267,11 +280,11 @@ content_frame = ttk.Frame(main_frame)
 content_frame.pack(fill=BOTH, expand=True)
 
 # Ліва панель (порожній простір)
-left_frame = ttk.Frame(content_frame, width=300)
+left_frame = ttk.Frame(content_frame, width=800)
 left_frame.pack(side=LEFT, fill=Y, padx=5, pady=5)
 
 # Права панель (медіаплеєр)
-right_frame = ttk.Frame(content_frame, relief="sunken", borderwidth=2, width=200, height=200)
+right_frame = ttk.Frame(content_frame, relief="sunken", borderwidth=2, width=1000, height=1000)
 right_frame.pack(side=RIGHT, padx=20, pady=20)
 right_frame.pack_propagate(False)
 
