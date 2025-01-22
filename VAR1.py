@@ -10,6 +10,8 @@ from ttkbootstrap.constants import *
 from PIL import Image, ImageTk
 
 is_playing = False
+object_history = {}
+dropdowns = {}
 
 def calculate_distance(x1, y1, x2, y2):
     """Обчислення евклідової відстані."""
@@ -112,6 +114,24 @@ def video_processor(frame_queue, stop_event, video_label):
                     "velocity": velocity,
                     "updated": updated
                 })
+                for obj_id, data in object_data.items():
+                    if data["updated"]:  # Оновлюємо тільки об'єкти, які змінили координати
+                        new_entry = f"Кадр: {frame_count}, Координати: {data['coords']}, Відстань: {data['distance']:.2f}, Швидкість: {data['velocity']:.2f}"
+                        if distance > 0:
+                        # Якщо ID ще немає у списку
+                            if obj_id not in object_history:
+                                object_history[obj_id] = []  # Ініціалізуємо історію
+                                # Створюємо новий спадний список
+                                dropdown_frame = ttk.Frame(left_frame)
+                                dropdown_frame.pack(fill=X, pady=5)
+                                label = ttk.Label(dropdown_frame, text=f"Об'єкт {obj_id}:")
+                                label.pack(side=LEFT, padx=5)
+                                combobox = ttk.Combobox(dropdown_frame, values=[], width=50)
+                                combobox.pack(side=LEFT, padx=5)
+                                dropdowns[obj_id] = combobox  # Зберігаємо посилання
+                            # Додаємо новий запис
+                            object_history[obj_id].append(new_entry)
+                            dropdowns[obj_id]['values'] = object_history[obj_id]  # Оновлюємо спадний список
 
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                 cv2.putText(frame, matched_id, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
@@ -144,8 +164,9 @@ def video_processor(frame_queue, stop_event, video_label):
 
         rgb_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
         img = ImageTk.PhotoImage(Image.fromarray(rgb_frame))
-        video_label.config(image=img)
-        video_label.image = img
+        if is_playing:
+            video_label.config(image=img)
+            video_label.image = img
 
         frame_count += 1
 
@@ -204,34 +225,30 @@ def stop_video():
         print("Відео не запущене!")
         return  # Якщо відео вже зупинене, нічого не робимо.
 
-    # 1. Сигналізуємо потокам завершити роботу.
-    stop_event.set()  # Встановлюємо прапорець для завершення роботи потоків.
+    # Сигнал завершення
+    stop_event.set()
 
-    # 2. Негайно скидаємо зображення у віджеті.
+    # Очищаємо чергу кадрів
+    with frame_queue.mutex:
+        frame_queue.queue.clear()
+
+    # Чекаємо завершення потоків
+    if reader_thread.is_alive():
+        reader_thread.join(timeout=2)
+    if processor_thread.is_alive():
+        processor_thread.join(timeout=2)
+
+    # Скидаємо відображення
     video_label.config(image="")
     video_label.image = None
 
-    # 4. Чекаємо завершення потоків.
-    if reader_thread.is_alive():
-        reader_thread.join(timeout=1)  # Очікуємо завершення потоку зчитування.
-    if processor_thread.is_alive():
-        processor_thread.join(timeout=1)  # Очікуємо завершення потоку обробки.
+    # Встановлюємо початковий розмір фрейма
+    right_frame.config(width=1000, height=1000)
+    right_frame.pack_propagate(False)
 
-        # 3. Очищаємо чергу кадрів, щоб уникнути затримок.
-    with frame_queue.mutex:
-        frame_queue.queue.clear()  # Видаляємо всі кадри з черги.
-
-
-    # 5. Встановлюємо початковий розмір фрейма.
-    right_frame.config(width=200, height=200)  # Встановлюємо початкові розміри.
-    right_frame.pack_propagate(False)  # Фіксуємо розмір фрейма.
-
-    # 6. Скидаємо прапорець.
-    is_playing = False  # Скидаємо стан програвача.
-
+    # Скидаємо прапорець
+    is_playing = False
     print("Відтворення відео зупинено.")
-
-
 
 def select_video_file(entry):
     """Вибір відеофайлу."""
@@ -243,6 +260,8 @@ def select_video_file(entry):
 
 # Створення графічного інтерфейсу
 app = ttk.Window(themename="darkly")
+app.resizable(False, False)
+
 app.title("Відстеження об'єктів у відео")
 app.geometry("1800x1000")
 
@@ -280,7 +299,7 @@ content_frame = ttk.Frame(main_frame)
 content_frame.pack(fill=BOTH, expand=True)
 
 # Ліва панель (порожній простір)
-left_frame = ttk.Frame(content_frame, width=800)
+left_frame = ttk.Frame(content_frame, width=400)
 left_frame.pack(side=LEFT, fill=Y, padx=5, pady=5)
 
 # Права панель (медіаплеєр)
