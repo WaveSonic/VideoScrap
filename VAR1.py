@@ -8,10 +8,71 @@ import ttkbootstrap as ttk
 from tkinter import filedialog
 from ttkbootstrap.constants import *
 from PIL import Image, ImageTk
+import json
+import threading
+import queue
+
+# Черга для запису даних
+data_queue = queue.Queue()
+stop_saving_event = threading.Event()
+
+
+def save_data_worker(file_name):
+    """
+    Потік для запису даних у файл.
+    :param file_name: Ім'я JSON-файлу.
+    """
+    with open(file_name, "w") as json_file:
+        while not stop_saving_event.is_set() or not data_queue.empty():
+            try:
+                data = data_queue.get(timeout=1)  # Отримуємо дані з черги
+                json.dump(data, json_file)
+                json_file.write("\n")
+            except queue.Empty:
+                continue  # Пропускаємо, якщо черга порожня
+
+
+def save_object_data(object_data, frame_count):
+    """
+    Додає дані до черги для запису у файл.
+    :param object_data: Словник з даними об'єктів.
+    :param frame_count: Номер поточного кадру.
+    """
+    data_to_save = {
+        "frame": frame_count,
+        "objects": [
+            {
+                "id": obj_id,
+                "coords": obj["coords"],
+                "distance": obj["distance"],
+                "velocity": obj["velocity"],
+                "time": obj["time"]
+            }
+            for obj_id, obj in object_data.items()
+        ]
+    }
+    data_queue.put(data_to_save)
+
+
+def start_saving_thread(file_name):
+    """
+    Запускає потік для запису даних у файл.
+    :param file_name: Ім'я JSON-файлу.
+    """
+    global saving_thread
+    stop_saving_event.clear()
+    saving_thread = threading.Thread(target=save_data_worker, args=(file_name,), daemon=True)
+    saving_thread.start()
+
+
+def stop_saving_thread():
+    """
+    Завершує потік для запису даних у файл.
+    """
+    stop_saving_event.set()
+    saving_thread.join()
 
 is_playing = False
-object_history = {}
-dropdowns = {}
 
 def calculate_distance(x1, y1, x2, y2):
     """Обчислення евклідової відстані."""
@@ -114,24 +175,7 @@ def video_processor(frame_queue, stop_event, video_label):
                     "velocity": velocity,
                     "updated": updated
                 })
-                for obj_id, data in object_data.items():
-                    if data["updated"]:  # Оновлюємо тільки об'єкти, які змінили координати
-                        new_entry = f"Кадр: {frame_count}, Координати: {data['coords']}, Відстань: {data['distance']:.2f}, Швидкість: {data['velocity']:.2f}"
-                        if distance > 0:
-                        # Якщо ID ще немає у списку
-                            if obj_id not in object_history:
-                                object_history[obj_id] = []  # Ініціалізуємо історію
-                                # Створюємо новий спадний список
-                                dropdown_frame = ttk.Frame(left_frame)
-                                dropdown_frame.pack(fill=X, pady=5)
-                                label = ttk.Label(dropdown_frame, text=f"Об'єкт {obj_id}:")
-                                label.pack(side=LEFT, padx=5)
-                                combobox = ttk.Combobox(dropdown_frame, values=[], width=50)
-                                combobox.pack(side=LEFT, padx=5)
-                                dropdowns[obj_id] = combobox  # Зберігаємо посилання
-                            # Додаємо новий запис
-                            object_history[obj_id].append(new_entry)
-                            dropdowns[obj_id]['values'] = object_history[obj_id]  # Оновлюємо спадний список
+                save_object_data(object_data, frame_count)
 
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                 cv2.putText(frame, matched_id, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
@@ -164,9 +208,8 @@ def video_processor(frame_queue, stop_event, video_label):
 
         rgb_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
         img = ImageTk.PhotoImage(Image.fromarray(rgb_frame))
-        if is_playing:
-            video_label.config(image=img)
-            video_label.image = img
+        video_label.config(image=img)
+        video_label.image = img
 
         frame_count += 1
 
@@ -215,6 +258,7 @@ def start_tracking(video_source, video_label, right_frame):
 
     reader_thread.start()
     processor_thread.start()
+    start_saving_thread("object_data.json")
 
 
 def stop_video():
@@ -225,30 +269,34 @@ def stop_video():
         print("Відео не запущене!")
         return  # Якщо відео вже зупинене, нічого не робимо.
 
-    # Сигнал завершення
-    stop_event.set()
+    # 1. Сигналізуємо потокам завершити роботу.
+    stop_event.set()  # Встановлюємо прапорець для завершення роботи потоків.
 
-    # Очищаємо чергу кадрів
-    with frame_queue.mutex:
-        frame_queue.queue.clear()
-
-    # Чекаємо завершення потоків
-    if reader_thread.is_alive():
-        reader_thread.join(timeout=2)
-    if processor_thread.is_alive():
-        processor_thread.join(timeout=2)
-
-    # Скидаємо відображення
+    # 2. Негайно скидаємо зображення у віджеті.
     video_label.config(image="")
     video_label.image = None
 
-    # Встановлюємо початковий розмір фрейма
-    right_frame.config(width=1000, height=1000)
-    right_frame.pack_propagate(False)
+    # 4. Чекаємо завершення потоків.
+    if reader_thread.is_alive():
+        reader_thread.join(timeout=1)  # Очікуємо завершення потоку зчитування.
+    if processor_thread.is_alive():
+        processor_thread.join(timeout=1)  # Очікуємо завершення потоку обробки.
 
-    # Скидаємо прапорець
-    is_playing = False
+        # 3. Очищаємо чергу кадрів, щоб уникнути затримок.
+    with frame_queue.mutex:
+        frame_queue.queue.clear()  # Видаляємо всі кадри з черги.
+
+
+    # 5. Встановлюємо початковий розмір фрейма.
+    right_frame.config(width=200, height=200)  # Встановлюємо початкові розміри.
+    right_frame.pack_propagate(False)  # Фіксуємо розмір фрейма.
+
+    # 6. Скидаємо прапорець.
+    is_playing = False  # Скидаємо стан програвача.
+    stop_saving_thread()
     print("Відтворення відео зупинено.")
+
+
 
 def select_video_file(entry):
     """Вибір відеофайлу."""
@@ -260,8 +308,6 @@ def select_video_file(entry):
 
 # Створення графічного інтерфейсу
 app = ttk.Window(themename="darkly")
-app.resizable(False, False)
-
 app.title("Відстеження об'єктів у відео")
 app.geometry("1800x1000")
 
@@ -299,7 +345,7 @@ content_frame = ttk.Frame(main_frame)
 content_frame.pack(fill=BOTH, expand=True)
 
 # Ліва панель (порожній простір)
-left_frame = ttk.Frame(content_frame, width=400)
+left_frame = ttk.Frame(content_frame, width=800)
 left_frame.pack(side=LEFT, fill=Y, padx=5, pady=5)
 
 # Права панель (медіаплеєр)
