@@ -9,75 +9,16 @@ from tkinter import filedialog
 from ttkbootstrap.constants import *
 from PIL import Image, ImageTk
 import json
-import threading
-import queue
+from datetime import datetime
 
-# Черга для запису даних
-data_queue = queue.Queue()
-stop_saving_event = threading.Event()
-
-
-def save_data_worker(file_name):
-    """
-    Потік для запису даних у файл.
-    :param file_name: Ім'я JSON-файлу.
-    """
-    with open(file_name, "w") as json_file:
-        while not stop_saving_event.is_set() or not data_queue.empty():
-            try:
-                data = data_queue.get(timeout=1)  # Отримуємо дані з черги
-                json.dump(data, json_file)
-                json_file.write("\n")
-            except queue.Empty:
-                continue  # Пропускаємо, якщо черга порожня
-
-
-def save_object_data(object_data, frame_count):
-    """
-    Додає дані до черги для запису у файл.
-    :param object_data: Словник з даними об'єктів.
-    :param frame_count: Номер поточного кадру.
-    """
-    data_to_save = {
-        "frame": frame_count,
-        "objects": [
-            {
-                "id": obj_id,
-                "coords": obj["coords"],
-                "distance": obj["distance"],
-                "velocity": obj["velocity"],
-                "time": obj["time"]
-            }
-            for obj_id, obj in object_data.items()
-        ]
-    }
-    data_queue.put(data_to_save)
-
-
-def start_saving_thread(file_name):
-    """
-    Запускає потік для запису даних у файл.
-    :param file_name: Ім'я JSON-файлу.
-    """
-    global saving_thread
-    stop_saving_event.clear()
-    saving_thread = threading.Thread(target=save_data_worker, args=(file_name,), daemon=True)
-    saving_thread.start()
-
-
-def stop_saving_thread():
-    """
-    Завершує потік для запису даних у файл.
-    """
-    stop_saving_event.set()
-    saving_thread.join()
+# Словник для зберігання даних
 
 is_playing = False
+output_file_name = ""
 
 def calculate_distance(x1, y1, x2, y2):
     """Обчислення евклідової відстані."""
     return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-
 
 def video_reader(source, frame_queue, stop_event):
     """Потік для зчитування відео."""
@@ -91,7 +32,6 @@ def video_reader(source, frame_queue, stop_event):
         ret, frame = cap.read()
         if not ret:
             print("Кінець відео або помилка читання кадру.")
-            stop_event.set()
             break
 
         try:
@@ -102,10 +42,11 @@ def video_reader(source, frame_queue, stop_event):
     cap.release()
     global is_playing
     is_playing = False
-
+    stop_video()  # Викликаємо зупинку відео після завершення потоку
 
 def video_processor(frame_queue, stop_event, video_label):
     """Потік для обробки відео."""
+    global object_data_dict
     back_sub = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=20, detectShadows=False)
     object_data = {}  # Зберігання даних для кожного ID
     id_counter = 0  # Лічильник для унікальних ID
@@ -130,9 +71,6 @@ def video_processor(frame_queue, stop_event, video_label):
 
         frame_height, frame_width, _ = frame.shape
         scale = min(max_width / frame_width, max_height / frame_height, 1.0)
-
-        # Оновлення розміру вікна
-
 
         for contour in contours:
             if cv2.contourArea(contour) > 1000:
@@ -175,7 +113,6 @@ def video_processor(frame_queue, stop_event, video_label):
                     "velocity": velocity,
                     "updated": updated
                 })
-                save_object_data(object_data, frame_count)
 
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                 cv2.putText(frame, matched_id, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
@@ -185,26 +122,18 @@ def video_processor(frame_queue, stop_event, video_label):
             if obj_id not in current_ids:
                 current_time = time.time()
                 elapsed_time = current_time - object_data[obj_id]["time"]
-                if elapsed_time > 1:  # Видалення об'єктів, які не виявлені більше 5 секунд
-                    print(f"Об'єкт {obj_id} видалено через відсутність у кадрі.")
+                if elapsed_time > 1:
                     del object_data[obj_id]
 
-        print(f"Кадр {frame_count + 1}:")
-        for obj_id, data in object_data.items():
-            if data["updated"]:  # Виводимо тільки об'єкти, які змінили координати
-                print(
-                    f"  {obj_id}: Координати: {data['coords']}, Відстань: {data['distance']:.2f}, Швидкість: {data['velocity']:.2f}"
-                )
+        object_data_dict[frame_count] = {
+            "objects": object_data.copy()
+        }
 
         frame_height, frame_width, _ = frame.shape
         scale = min(max_width / frame_width, max_height / frame_height, 1.0)
         new_width = int(frame_width * scale)
         new_height = int(frame_height * scale)
         resized_frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
-
-        # Оновлюємо розмір плеєра під відео
-        #right_frame.config(width=new_width, height=new_height)
-        #right_frame.pack_propagate(False)
 
         rgb_frame = cv2.cvtColor(resized_frame, cv2.COLOR_BGR2RGB)
         img = ImageTk.PhotoImage(Image.fromarray(rgb_frame))
@@ -217,10 +146,8 @@ def video_processor(frame_queue, stop_event, video_label):
             stop_event.set()
             break
 
-
-
 def start_tracking(video_source, video_label, right_frame):
-    global is_playing, reader_thread, processor_thread, stop_event, frame_queue
+    global is_playing, reader_thread, processor_thread, stop_event, frame_queue, object_data_dict, output_file_name
 
     if is_playing:
         print("Відтворення вже запущено!")
@@ -230,10 +157,15 @@ def start_tracking(video_source, video_label, right_frame):
         print("Будь ласка, виберіть файл відео.")
         return
 
+    # Генерація назви файлу для запису даних
+    video_name = video_source.split('/')[-1].split('.')[0]
+    current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    output_file_name = f"{video_name}_{current_time}.json"
+
+    object_data_dict = {}  # Очищення словника
     frame_queue = queue.Queue(maxsize=20)
     stop_event = threading.Event()
 
-    # Оновлення розміру плеєра відповідно до відео
     cap = cv2.VideoCapture(video_source)
     if not cap.isOpened():
         print(f"Не вдалося відкрити джерело: {video_source}")
@@ -252,51 +184,35 @@ def start_tracking(video_source, video_label, right_frame):
 
     is_playing = True
 
-    # Запуск потоків
     reader_thread = threading.Thread(target=video_reader, args=(video_source, frame_queue, stop_event))
     processor_thread = threading.Thread(target=video_processor, args=(frame_queue, stop_event, video_label))
 
     reader_thread.start()
     processor_thread.start()
-    start_saving_thread("object_data.json")
-
 
 def stop_video():
-    """Зупинка потоків і очищення відеоплеєра."""
-    global is_playing, stop_event, reader_thread, processor_thread, frame_queue
+    """Зупинка потоків і запис даних у файл."""
+    global is_playing, stop_event, reader_thread, processor_thread, frame_queue, object_data_dict, output_file_name
 
     if not is_playing:
         print("Відео не запущене!")
-        return  # Якщо відео вже зупинене, нічого не робимо.
+        return
 
-    # 1. Сигналізуємо потокам завершити роботу.
-    stop_event.set()  # Встановлюємо прапорець для завершення роботи потоків.
+    stop_event.set()
 
-    # 2. Негайно скидаємо зображення у віджеті.
+    if reader_thread.is_alive():
+        reader_thread.join(timeout=1)
+    if processor_thread.is_alive():
+        processor_thread.join(timeout=1)
+
     video_label.config(image="")
     video_label.image = None
 
-    # 4. Чекаємо завершення потоків.
-    if reader_thread.is_alive():
-        reader_thread.join(timeout=1)  # Очікуємо завершення потоку зчитування.
-    if processor_thread.is_alive():
-        processor_thread.join(timeout=1)  # Очікуємо завершення потоку обробки.
-
-        # 3. Очищаємо чергу кадрів, щоб уникнути затримок.
     with frame_queue.mutex:
-        frame_queue.queue.clear()  # Видаляємо всі кадри з черги.
+        frame_queue.queue.clear()
 
-
-    # 5. Встановлюємо початковий розмір фрейма.
-    right_frame.config(width=200, height=200)  # Встановлюємо початкові розміри.
-    right_frame.pack_propagate(False)  # Фіксуємо розмір фрейма.
-
-    # 6. Скидаємо прапорець.
-    is_playing = False  # Скидаємо стан програвача.
-    stop_saving_thread()
-    print("Відтворення відео зупинено.")
-
-
+    is_playing = False
+    print(f"Відтворення відео зупинено та дані збережено у файл: {output_file_name}")
 
 def select_video_file(entry):
     """Вибір відеофайлу."""
@@ -305,17 +221,13 @@ def select_video_file(entry):
         entry.delete(0, END)
         entry.insert(0, filepath)
 
-
-# Створення графічного інтерфейсу
 app = ttk.Window(themename="darkly")
 app.title("Відстеження об'єктів у відео")
 app.geometry("1800x1000")
 
-# Головний контейнер
 main_frame = ttk.Frame(app)
 main_frame.pack(fill=BOTH, expand=True, padx=10, pady=10)
 
-# Верхній рядок з введенням відео і кнопками
 controls_frame = ttk.Frame(main_frame)
 controls_frame.pack(fill=X, pady=5)
 
@@ -340,20 +252,16 @@ stop_button = ttk.Button(
 )
 stop_button.pack(side=LEFT, padx=5)
 
-# Головний поділ: зліва порожній простір, справа - медіаплеєр
 content_frame = ttk.Frame(main_frame)
 content_frame.pack(fill=BOTH, expand=True)
 
-# Ліва панель (порожній простір)
 left_frame = ttk.Frame(content_frame, width=800)
 left_frame.pack(side=LEFT, fill=Y, padx=5, pady=5)
 
-# Права панель (медіаплеєр)
 right_frame = ttk.Frame(content_frame, relief="sunken", borderwidth=2, width=1000, height=1000)
 right_frame.pack(side=RIGHT, padx=20, pady=20)
 right_frame.pack_propagate(False)
 
-# Відео відображення в правій панелі
 video_label = ttk.Label(right_frame)
 video_label.pack(fill=BOTH, expand=True)
 
