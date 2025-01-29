@@ -141,13 +141,14 @@ def create_gui():
         print(f"Дані збережено у файл: {filename}")
 
     def update_table_worker():
-        """Фоновий потік для оновлення таблиці кожні 10 кадрів."""
-        while not stop_event.is_set():
+
+        """Фоновий потік для оновлення таблиці."""
+        while True:  # Без перевірки stop_event
             try:
                 objects, frame_count, elapsed_time = data_queue.get(timeout=1)
                 table.after(0, update_table, objects, frame_count)
             except queue.Empty:
-                continue  # Чекаємо нові дані
+                continue
 
     def update_table(objects, frame_count):
         """Оновлення таблиці даними про об'єкти."""
@@ -220,6 +221,8 @@ def create_gui():
 
 
         tracked_data = {}
+
+
         def play_video():
             global is_playing
             cap = cv2.VideoCapture(filepath)
@@ -236,7 +239,11 @@ def create_gui():
                 fps = 30
             frame_delay = 1 / fps
 
-            back_sub = cv2.createBackgroundSubtractorMOG2(history=500, varThreshold=25, detectShadows=True)
+            back_sub = cv2.createBackgroundSubtractorMOG2(
+                history=int(settings["history"]),
+                varThreshold=int(settings["varThreshold"]),
+                detectShadows=True
+            )
             display_width = right_frame.winfo_width()
             display_height = right_frame.winfo_height()
 
@@ -248,7 +255,6 @@ def create_gui():
             last_frame_time = time.time()
             prev_img = None
             frame_count = 0
-
             while cap.isOpened() and not stop_event.is_set():
                 ret, frame = cap.read()
                 if not ret:
@@ -345,18 +351,29 @@ def create_gui():
 
     threading.Thread(target=update_table_worker, daemon=True).start()
 
-
     def stop_video():
         """Зупинка відтворення відео."""
         global is_playing, stop_event
+
         if not is_playing:
             print("Немає запущеного відео для зупинки.")
             return
 
-        stop_event.set()
-        is_playing = False
+        print("Зупинка відео...")
+        stop_event.set()  # Зупиняємо потік відео
+        is_playing = False  # Скидаємо статус відтворення
+
+        time.sleep(0.1)  # Коротка пауза для завершення потоків
+
+        # Очищуємо чергу перед наступним запуском
+        while not data_queue.empty():
+            try:
+                data_queue.get_nowait()
+            except queue.Empty:
+                break
+
         video_label.configure(image="")  # Очистити екран
-        save_data_to_json()
+        print("Відео зупинено, черга очищена.")
 
     def show_about():
         messagebox.showinfo("Про програму", "Програма відстеження об'єктів у відео.\nВерсія 1.0")
