@@ -1,7 +1,7 @@
 import threading
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 import cv2
 from PIL import Image, ImageTk
 import time
@@ -63,6 +63,9 @@ def create_gui():
 
             # Середня швидкість
             average_velocity = data["total_velocity"] / data["velocity_count"] if data["velocity_count"] > 0 else 0
+
+            if average_velocity == 0:
+                continue
 
             # Оновити існуючий рядок або додати новий
             if obj_id in existing_ids:
@@ -188,14 +191,15 @@ def create_gui():
                         prev_coords = object_data[matched_id]["coords"]
                         distance = ((cx - prev_coords[0]) ** 2 + (cy - prev_coords[1]) ** 2) ** 0.5
                         velocity = distance * fps
+                        if velocity > 0:
 
-                        object_data[matched_id]["coords"] = (cx, cy)
-                        object_data[matched_id]["velocity"] = velocity
-                        object_data[matched_id]["last_seen"] = current_time
+                            object_data[matched_id]["coords"] = (cx, cy)
+                            object_data[matched_id]["velocity"] = velocity
+                            object_data[matched_id]["last_seen"] = current_time
 
-                        # Оновлення середньої швидкості
-                        object_data[matched_id]["total_velocity"] += velocity
-                        object_data[matched_id]["velocity_count"] += 1
+                            # Оновлення середньої швидкості
+                            object_data[matched_id]["total_velocity"] += velocity
+                            object_data[matched_id]["velocity_count"] += 1
 
                         if not object_data[matched_id]["visible"] and \
                                 current_time - object_data[matched_id]["start_time"] >= min_visible_time:
@@ -251,6 +255,9 @@ def create_gui():
         video_label.configure(image="")  # Очистити екран
         save_data_to_json()
 
+    def show_about():
+        messagebox.showinfo("Про програму", "Програма відстеження об'єктів у відео.\nВерсія 1.0")
+
     app = ttk.Window(themename="darkly")
     app.title("Відстеження об'єктів у відео")
     app.geometry("1800x1000")
@@ -263,7 +270,7 @@ def create_gui():
     controls_frame = ttk.Frame(main_frame)
     controls_frame.pack(fill=X, pady=5)
 
-    file_entry = ttk.Entry(controls_frame, width=50)
+    file_entry = ttk.Entry(controls_frame, width=150)
     file_entry.pack(side=LEFT, padx=5)
 
     file_button = ttk.Button(controls_frame, text="Вибрати відео", command=select_video)
@@ -314,6 +321,26 @@ def create_gui():
     # Плеєр для відео з чорним фоном
     video_label = ttk.Label(right_frame, background="black")
     video_label.pack(fill=BOTH, expand=True)
+
+    menubar = ttk.Menu(app)
+    app.config(menu=menubar)
+
+    file_menu = ttk.Menu(menubar, tearoff=0)
+    file_menu.add_command(label="Відкрити відео", command=select_video)
+    file_menu.add_command(label="Зберегти дані", command=save_data_to_json)
+    file_menu.add_separator()
+    file_menu.add_command(label="Вихід", command=app.quit)
+
+    play_menu = ttk.Menu(menubar, tearoff=0)
+    play_menu.add_command(label="Запустити", command=start_video)
+    play_menu.add_command(label="Зупинити", command=stop_video)
+
+    help_menu = ttk.Menu(menubar, tearoff=0)
+    help_menu.add_command(label="Про програму", command=show_about)
+
+    menubar.add_cascade(label="Файл", menu=file_menu)
+    menubar.add_cascade(label="Відтворення", menu=play_menu)
+    menubar.add_cascade(label="Допомога", menu=help_menu)
 
     # Запуск головного циклу інтерфейсу
     app.mainloop()
