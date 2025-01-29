@@ -1,20 +1,123 @@
 import threading
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, Toplevel, Scale, HORIZONTAL
 import cv2
 from PIL import Image, ImageTk
 import time
 import queue
 import json
+import os
 from datetime import datetime
+
+SETTINGS_FILE = "settings.json"
+# Налаштування за замовчуванням
+default_settings = {
+    "history": 500,
+    "varThreshold": 25,
+    "min_contour_area": 1000,
+    "max_disappear_time": 1.0,
+    "min_visible_time": 1.0
+}
+
+settings = default_settings.copy()
+
+if os.path.exists(SETTINGS_FILE):
+    with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+        settings = json.load(f)
+else:
+    settings = default_settings.copy()
 tracked_data = {}
 is_playing = False  # Статус відтворення відео
 stop_event = threading.Event()  # Подія для зупинки відео
 data_queue = queue.Queue()  # Черга для оновлення таблиці
 
+def save_settings():
+    """Зберігає налаштування у JSON-файл."""
+    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+        json.dump(settings, f, indent=4, ensure_ascii=False)
+
 
 def create_gui():
+    def open_settings_window():
+        """Відкриває вікно налаштувань."""
+        settings_window = Toplevel(app)
+        settings_window.title("Налаштування")
+        settings_window.geometry("500x300")  # Менше вікно, оскільки параметрів менше
+        settings_window.attributes('-topmost', True)  # Вікно завжди поверх
+
+        def update_setting(key, value):
+            """Оновлення параметра та збереження у файл."""
+            settings[key] = value
+            save_settings()
+
+        def update_slider(event, key, slider):
+            """Оновлення повзунка при введенні числа вручну."""
+            try:
+                value = event.widget.get().replace(",", ".")  # Замінюємо кому на крапку
+                value = float(value)  # Перетворюємо в число
+                value = max(slider.cget("from"), min(value, slider.cget("to")))  # Обмежуємо значення
+                slider.set(value)  # Оновлюємо повзунок
+                update_setting(key, value)  # Оновлюємо налаштування
+            except ValueError:
+                pass  # Ігноруємо некоректне введення
+
+        def update_entry(slider, entry, key):
+            """Оновлення поля введення при зміні повзунка."""
+            value = round(slider.get(), 2)
+            entry.delete(0, END)
+            entry.insert(0, f"{value:.2f}".replace(".", ","))  # Відображаємо з комою
+            update_setting(key, value)
+
+        def create_setting_row(label_text, key, from_, to_, step, description):
+            """Створює рядок з налаштуванням."""
+            frame = ttk.Frame(settings_window)
+            frame.pack(fill=X, padx=10, pady=5)
+
+            ttk.Label(frame, text=label_text, width=18, anchor=W).pack(side=LEFT)  # Назва параметра
+            slider = Scale(frame, from_=from_, to=to_, orient=HORIZONTAL, resolution=step,
+                           command=lambda v: update_entry(slider, entry, key))
+            slider.set(settings[key])
+            slider.pack(side=LEFT, fill=X, expand=True, padx=5)
+
+            entry = ttk.Entry(frame, width=6)
+            entry.insert(0, f"{settings[key]:.2f}".replace(".", ","))  # Відображаємо з комою
+            entry.pack(side=LEFT, padx=5)
+            entry.bind("<Return>", lambda event, k=key, s=slider: update_slider(event, k, s))
+
+            ttk.Label(frame, text=description, width=18, anchor=W).pack(side=LEFT)  # Опис
+
+        ttk.Label(settings_window, text="Налаштування виявлення об'єктів", font=("Arial", 12, "bold")).pack(pady=5)
+
+        # Залишаємо тільки три потрібні параметри
+        create_setting_row("Довжина історії:", "history", 100, 2000, 100, "Чутливість до старих об'єктів")
+        create_setting_row("Поріг руху:", "varThreshold", 10, 100, 1, "Від 10 - дуже чутливий")
+        create_setting_row("Мін. площа (px²):", "min_contour_area", 500, 5000, 100, "Фільтр дрібних об'єктів")
+
+        def reset_settings():
+            """Скидає налаштування до стандартних значень."""
+            global settings
+            settings = default_settings.copy()
+            save_settings()
+            settings_window.destroy()
+            open_settings_window()  # Перезапускаємо вікно
+            messagebox.showinfo("Налаштування", "Налаштування скинуто до стандартних значень.")
+
+        def save_and_close():
+            """Зберігає налаштування та закриває вікно."""
+            save_settings()
+            messagebox.showinfo("Збереження", "Налаштування збережено успішно.")
+            settings_window.destroy()
+
+        # Кнопки управління
+        btn_frame = ttk.Frame(settings_window)
+        btn_frame.pack(fill=X, pady=10)
+
+        ttk.Button(btn_frame, text="Скинути налаштування", command=reset_settings, bootstyle="danger").pack(side=LEFT,
+                                                                                                            padx=10)
+        ttk.Button(btn_frame, text="Зберегти", command=save_and_close, bootstyle="success").pack(side=RIGHT, padx=10)
+
+
     def save_data_to_json():
         """Зберігає tracked_data у JSON-файл."""
         if not tracked_data:
@@ -342,7 +445,13 @@ def create_gui():
     menubar.add_cascade(label="Відтворення", menu=play_menu)
     menubar.add_cascade(label="Допомога", menu=help_menu)
 
+    settings_menu = ttk.Menu(menubar, tearoff=0)
+    settings_menu.add_command(label="Налаштування", command=open_settings_window)
+
+    menubar.add_cascade(label="Налаштування", menu=settings_menu)
     # Запуск головного циклу інтерфейсу
+
+
     app.mainloop()
 
 # Запуск графічного інтерфейсу в окремому потоці
