@@ -9,6 +9,9 @@ import queue
 import json
 import os
 from datetime import datetime
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 SETTINGS_FILE = "settings.json"
 # Налаштування за замовчуванням
@@ -31,6 +34,11 @@ tracked_data = {}
 is_playing = False  # Статус відтворення відео
 stop_event = threading.Event()  # Подія для зупинки відео
 data_queue = queue.Queue()  # Черга для оновлення таблиці
+canvas_widget = None
+ax = None  # Глобальна змінна для осей графіка
+x_press, y_press = None, None  # Початкові координати натискання миші
+is_dragging = False
+
 
 def save_settings():
     """Зберігає налаштування у JSON-файл."""
@@ -39,6 +47,167 @@ def save_settings():
 
 
 def create_gui():
+    def open_statistics():
+        """Відкриває вікно вибору типу графіка."""
+        stats_window = Toplevel(app)
+        stats_window.title("Статистика")
+        stats_window.geometry("400x350")
+        stats_window.attributes('-topmost', True)
+
+        ttk.Label(stats_window, text="Оберіть тип графіка:", font=("Arial", 12, "bold")).pack(pady=10)
+
+        graph_types = {
+            "Переміщення об'єктів у часі": "displacement_mm",
+            "Швидкість об'єктів у часі": "average_velocity_mm_s",
+            "Траєкторія руху (X vs Y)": "trajectory",
+            "Гістограма швидкості": "hist_velocity",
+            "Гістограма переміщення": "hist_displacement"
+        }
+
+        selected_graph = ttk.StringVar(value=list(graph_types.keys())[0])
+
+        for text in graph_types.keys():
+            ttk.Radiobutton(stats_window, text=text, variable=selected_graph, value=text).pack(anchor="w", padx=20)
+
+        def select_json_and_plot():
+            """Просить вибрати JSON-файл, будує графік у плеєрі та закриває вікно вибору графіка."""
+            file_path = filedialog.askopenfilename(filetypes=[("JSON Files", "*.json")], parent=stats_window)
+            if not file_path:
+                return
+
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            selected_type = graph_types[selected_graph.get()]
+            plot_graph(data, selected_type)
+
+            # Закриваємо вікно вибору графіка
+            stats_window.destroy()
+
+        ttk.Button(stats_window, text="Побудувати графік", command=select_json_and_plot, bootstyle="success").pack(
+            pady=20)
+
+    def plot_graph(data, graph_type):
+        """Будує графік і виводить його у вікно плеєра."""
+        global canvas_widget, ax
+
+        # Видаляємо відео, якщо воно є
+        video_label.pack_forget()
+
+        # Якщо вже є графік, видаляємо його
+        if canvas_widget:
+            canvas_widget.get_tk_widget().destroy()
+
+        fig, ax = plt.subplots(figsize=(7, 5))
+
+        if graph_type in ["displacement_mm", "average_velocity_mm_s"]:
+            # Лінійний графік переміщення або швидкості
+            for obj_id, entries in data.items():
+                frames = [entry["frame"] for entry in entries]
+                values = [entry[graph_type] for entry in entries]
+                ax.plot(frames, values, marker='o', label=obj_id)
+
+            ax.set_xlabel("Кадри")
+            ax.set_ylabel("Переміщення (мм)" if graph_type == "displacement_mm" else "Швидкість (мм/с)")
+            ax.set_title("Статистика об'єктів")
+            ax.legend()
+            ax.grid(True)
+
+        elif graph_type == "trajectory":
+            # Траєкторія руху (X vs Y)
+            for obj_id, entries in data.items():
+                x_values = [entry["x_mm"] for entry in entries]
+                y_values = [entry["y_mm"] for entry in entries]
+                ax.plot(x_values, y_values, marker='o', linestyle='-', label=obj_id)
+
+            ax.set_xlabel("Координата X (мм)")
+            ax.set_ylabel("Координата Y (мм)")
+            ax.set_title("Траєкторія руху об'єктів")
+            ax.legend()
+            ax.grid(True)
+
+        elif graph_type in ["hist_velocity", "hist_displacement"]:
+            # Гістограми швидкості або переміщення
+            all_values = []
+            for obj_id, entries in data.items():
+                all_values.extend(
+                    [entry["average_velocity_mm_s"] if graph_type == "hist_velocity" else entry["displacement_mm"]
+                     for entry in entries])
+
+            ax.hist(all_values, bins=10, alpha=0.7, color='b', edgecolor='black')
+            ax.set_xlabel("Швидкість (мм/с)" if graph_type == "hist_velocity" else "Переміщення (мм)")
+            ax.set_ylabel("Кількість об'єктів")
+            ax.set_title("Гістограма швидкості" if graph_type == "hist_velocity" else "Гістограма переміщення")
+
+        # Додаємо можливість масштабування колесом миші
+        fig.canvas.mpl_connect("scroll_event", on_scroll)
+        # Додаємо можливість переміщення графіка мишею
+        fig.canvas.mpl_connect("button_press_event", on_press)
+        fig.canvas.mpl_connect("motion_notify_event", on_drag)
+        fig.canvas.mpl_connect("button_release_event", on_release)  # Відпускання кнопки миші
+
+        # Відображення графіка в Tkinter
+        canvas_widget = FigureCanvasTkAgg(fig, master=right_frame)
+        canvas_widget.get_tk_widget().pack(fill="both", expand=True)
+
+    def on_scroll(event):
+        """Обробляє подію прокрутки миші для масштабування графіка."""
+        global ax
+        if ax is None:
+            return
+
+        x_min, x_max = ax.get_xlim()
+        y_min, y_max = ax.get_ylim()
+
+        scale_factor = 1.1 if event.step < 0 else 0.9  # Збільшення або зменшення масштабу
+
+        ax.set_xlim([x_min * scale_factor, x_max * scale_factor])
+        ax.set_ylim([y_min * scale_factor, y_max * scale_factor])
+
+        ax.figure.canvas.draw_idle()  # Оновлення графіка
+
+    def on_press(event):
+        """Запам’ятовує початкову позицію натискання миші."""
+        global x_press, y_press, is_dragging
+        if event.button == 1:  # Тільки ліва кнопка миші
+            x_press, y_press = event.xdata, event.ydata
+            is_dragging = True
+
+    def on_drag(event):
+        """Переміщує графік, коли користувач тягне мишу."""
+        global ax, x_press, y_press, is_dragging
+        if not is_dragging or ax is None or x_press is None or y_press is None:
+            return
+
+        if event.xdata is None or event.ydata is None:
+            return
+
+        dx = x_press - event.xdata
+        dy = y_press - event.ydata
+
+        x_min, x_max = ax.get_xlim()
+        y_min, y_max = ax.get_ylim()
+
+        ax.set_xlim([x_min + dx, x_max + dx])
+        ax.set_ylim([y_min + dy, y_max + dy])
+
+        ax.figure.canvas.draw_idle()  # Оновлення графіка
+
+    def on_release(event):
+        """Зупиняє перетягування графіка після відпускання кнопки миші."""
+        global is_dragging
+        is_dragging = False
+
+    def clear_graph():
+        """При запуску відео видаляє графік, якщо він відкритий."""
+        global canvas_widget
+
+        if canvas_widget:
+            canvas_widget.get_tk_widget().destroy()
+            canvas_widget = None
+
+        video_label.pack(fill="both", expand=True)
+
     def open_settings_window():
         """Відкриває вікно налаштувань."""
         settings_window = Toplevel(app)
@@ -210,7 +379,7 @@ def create_gui():
         if is_playing:
             print("Відео вже запущено!")
             return
-
+        clear_graph()
         filepath = file_entry.get()
         if not filepath:
             print("Будь ласка, виберіть файл відео.")
@@ -464,7 +633,9 @@ def create_gui():
 
     settings_menu = ttk.Menu(menubar, tearoff=0)
     settings_menu.add_command(label="Налаштування", command=open_settings_window)
-
+    statistics_menu = ttk.Menu(menubar, tearoff=0)
+    statistics_menu.add_command(label="Показати статистику", command=open_statistics)
+    menubar.add_cascade(label="Статистика", menu=statistics_menu)
     menubar.add_cascade(label="Налаштування", menu=settings_menu)
     # Запуск головного циклу інтерфейсу
 
