@@ -10,11 +10,9 @@ import json
 import os
 from datetime import datetime
 import matplotlib.pyplot as plt
-import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 SETTINGS_FILE = "settings.json"
-# Налаштування за замовчуванням
 default_settings = {
     "history": 500,
     "varThreshold": 25,
@@ -31,30 +29,26 @@ if os.path.exists(SETTINGS_FILE):
 else:
     settings = default_settings.copy()
 tracked_data = {}
-is_playing = False  # Статус відтворення відео
-stop_event = threading.Event()  # Подія для зупинки відео
-data_queue = queue.Queue()  # Черга для оновлення таблиці
+is_playing = False
+stop_event = threading.Event()
+data_queue = queue.Queue()
 canvas_widget = None
-ax = None  # Глобальна змінна для осей графіка
-x_press, y_press = None, None  # Початкові координати натискання миші
+ax = None
+x_press, y_press = None, None
 is_dragging = False
 
 def show_info_message(title, message):
-    """Відображає інформаційне повідомлення"""
     messagebox.showinfo(title, message)
 
 
 def show_warning_message(title, message):
-    """Відображає попереджувальне повідомлення"""
     messagebox.showwarning(title, message)
 
 
 def show_error_message(title, message):
-    """Відображає повідомлення про помилку"""
     messagebox.showerror(title, message)
 
 def save_settings():
-    """Зберігає налаштування у JSON-файл."""
     try:
         with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
             json.dump(settings, f, indent=4, ensure_ascii=False)
@@ -64,7 +58,6 @@ def save_settings():
 
 def create_gui():
     def open_statistics():
-        """Відкриває вікно вибору типу графіка."""
         stats_window = Toplevel(app)
         stats_window.title("Статистика")
         stats_window.geometry("400x350")
@@ -86,7 +79,6 @@ def create_gui():
             ttk.Radiobutton(stats_window, text=text, variable=selected_graph, value=text).pack(anchor="w", padx=20)
 
         def select_json_and_plot():
-            """Просить вибрати JSON-файл, будує графік у плеєрі та закриває вікно вибору графіка."""
             file_path = filedialog.askopenfilename(filetypes=[("JSON Files", "*.json")], parent=stats_window)
             if not file_path:
                 return
@@ -106,20 +98,14 @@ def create_gui():
             pady=20)
 
     def plot_graph(data, graph_type):
-        """Будує графік і виводить його у вікно плеєра."""
         global canvas_widget, ax
-
-        # Видаляємо відео, якщо воно є
         video_label.pack_forget()
-
-        # Якщо вже є графік, видаляємо його
         if canvas_widget:
             canvas_widget.get_tk_widget().destroy()
 
         fig, ax = plt.subplots(figsize=(7, 5))
 
         if graph_type in ["displacement_mm", "average_velocity_mm_s"]:
-            # Лінійний графік переміщення або швидкості
             for obj_id, entries in data.items():
                 frames = [entry["frame"] for entry in entries]
                 values = [entry[graph_type] for entry in entries]
@@ -132,7 +118,6 @@ def create_gui():
             ax.grid(True)
 
         elif graph_type == "trajectory":
-            # Траєкторія руху (X vs Y)
             for obj_id, entries in data.items():
                 x_values = [entry["x_mm"] for entry in entries]
                 y_values = [entry["y_mm"] for entry in entries]
@@ -145,7 +130,6 @@ def create_gui():
             ax.grid(True)
 
         elif graph_type in ["hist_velocity", "hist_displacement"]:
-            # Гістограми швидкості або переміщення
             all_values = []
             for obj_id, entries in data.items():
                 all_values.extend(
@@ -157,19 +141,15 @@ def create_gui():
             ax.set_ylabel("Кількість об'єктів")
             ax.set_title("Гістограма швидкості" if graph_type == "hist_velocity" else "Гістограма переміщення")
 
-        # Додаємо можливість масштабування колесом миші
         fig.canvas.mpl_connect("scroll_event", on_scroll)
-        # Додаємо можливість переміщення графіка мишею
         fig.canvas.mpl_connect("button_press_event", on_press)
         fig.canvas.mpl_connect("motion_notify_event", on_drag)
-        fig.canvas.mpl_connect("button_release_event", on_release)  # Відпускання кнопки миші
+        fig.canvas.mpl_connect("button_release_event", on_release)
 
-        # Відображення графіка в Tkinter
         canvas_widget = FigureCanvasTkAgg(fig, master=right_frame)
         canvas_widget.get_tk_widget().pack(fill="both", expand=True)
 
     def on_scroll(event):
-        """Обробляє подію прокрутки миші для масштабування графіка."""
         global ax
         if ax is None:
             return
@@ -177,22 +157,20 @@ def create_gui():
         x_min, x_max = ax.get_xlim()
         y_min, y_max = ax.get_ylim()
 
-        scale_factor = 1.1 if event.step < 0 else 0.9  # Збільшення або зменшення масштабу
+        scale_factor = 1.1 if event.step < 0 else 0.9
 
         ax.set_xlim([x_min * scale_factor, x_max * scale_factor])
         ax.set_ylim([y_min * scale_factor, y_max * scale_factor])
 
-        ax.figure.canvas.draw_idle()  # Оновлення графіка
+        ax.figure.canvas.draw_idle()
 
     def on_press(event):
-        """Запам’ятовує початкову позицію натискання миші."""
         global x_press, y_press, is_dragging
-        if event.button == 1:  # Тільки ліва кнопка миші
+        if event.button == 1:
             x_press, y_press = event.xdata, event.ydata
             is_dragging = True
 
     def on_drag(event):
-        """Переміщує графік, коли користувач тягне мишу."""
         global ax, x_press, y_press, is_dragging
         if not is_dragging or ax is None or x_press is None or y_press is None:
             return
@@ -209,15 +187,13 @@ def create_gui():
         ax.set_xlim([x_min + dx, x_max + dx])
         ax.set_ylim([y_min + dy, y_max + dy])
 
-        ax.figure.canvas.draw_idle()  # Оновлення графіка
+        ax.figure.canvas.draw_idle()
 
     def on_release(event):
-        """Зупиняє перетягування графіка після відпускання кнопки миші."""
         global is_dragging
         is_dragging = False
 
     def clear_graph():
-        """При запуску відео видаляє графік, якщо він відкритий."""
         global canvas_widget
 
         if canvas_widget:
@@ -230,73 +206,64 @@ def create_gui():
         """Відкриває вікно налаштувань."""
         settings_window = Toplevel(app)
         settings_window.title("Налаштування")
-        settings_window.geometry("500x300")  # Менше вікно, оскільки параметрів менше
-        settings_window.attributes('-topmost', True)  # Вікно завжди поверх
+        settings_window.geometry("500x300")
+        settings_window.attributes('-topmost', True)
 
         def update_setting(key, value):
-            """Оновлення параметра та збереження у файл."""
             settings[key] = value
             save_settings()
 
         def update_slider(event, key, slider):
-            """Оновлення повзунка при введенні числа вручну."""
             try:
-                value = event.widget.get().replace(",", ".")  # Замінюємо кому на крапку
-                value = float(value)  # Перетворюємо в число
-                value = max(slider.cget("from"), min(value, slider.cget("to")))  # Обмежуємо значення
-                slider.set(value)  # Оновлюємо повзунок
-                update_setting(key, value)  # Оновлюємо налаштування
+                value = event.widget.get().replace(",", ".")
+                value = float(value)
+                value = max(slider.cget("from"), min(value, slider.cget("to")))
+                slider.set(value)
+                update_setting(key, value)
             except ValueError:
-                pass  # Ігноруємо некоректне введення
+                pass
 
         def update_entry(slider, entry, key):
-            """Оновлення поля введення при зміні повзунка."""
             value = round(slider.get(), 2)
             entry.delete(0, END)
-            entry.insert(0, f"{value:.2f}".replace(".", ","))  # Відображаємо з комою
+            entry.insert(0, f"{value:.2f}".replace(".", ","))
             update_setting(key, value)
 
         def create_setting_row(label_text, key, from_, to_, step, description):
-            """Створює рядок з налаштуванням."""
             frame = ttk.Frame(settings_window)
             frame.pack(fill=X, padx=10, pady=5)
 
-            ttk.Label(frame, text=label_text, width=18, anchor=W).pack(side=LEFT)  # Назва параметра
+            ttk.Label(frame, text=label_text, width=18, anchor=W).pack(side=LEFT)
             slider = Scale(frame, from_=from_, to=to_, orient=HORIZONTAL, resolution=step,
                            command=lambda v: update_entry(slider, entry, key))
             slider.set(settings[key])
             slider.pack(side=LEFT, fill=X, expand=True, padx=5)
 
             entry = ttk.Entry(frame, width=6)
-            entry.insert(0, f"{settings[key]:.2f}".replace(".", ","))  # Відображаємо з комою
+            entry.insert(0, f"{settings[key]:.2f}".replace(".", ","))
             entry.pack(side=LEFT, padx=5)
             entry.bind("<Return>", lambda event, k=key, s=slider: update_slider(event, k, s))
 
             ttk.Label(frame, text=description, width=18, anchor=W).pack(side=LEFT)  # Опис
 
         ttk.Label(settings_window, text="Налаштування виявлення об'єктів", font=("Arial", 12, "bold")).pack(pady=5)
-
-        # Залишаємо тільки три потрібні параметри
         create_setting_row("Довжина історії:", "history", 100, 2000, 100, "Чутливість до старих об'єктів")
         create_setting_row("Поріг руху:", "varThreshold", 10, 100, 1, "Від 10 - дуже чутливий")
         create_setting_row("Мін. площа (px²):", "min_contour_area", 500, 5000, 100, "Фільтр дрібних об'єктів")
 
         def reset_settings():
-            """Скидає налаштування до стандартних значень."""
             global settings
             settings = default_settings.copy()
             save_settings()
             settings_window.destroy()
-            open_settings_window()  # Перезапускаємо вікно
+            open_settings_window()
             messagebox.showinfo("Налаштування", "Налаштування скинуто до стандартних значень.")
 
         def save_and_close():
-            """Зберігає налаштування та закриває вікно."""
             save_settings()
             messagebox.showinfo("Збереження", "Налаштування збережено успішно.")
             settings_window.destroy()
 
-        # Кнопки управління
         btn_frame = ttk.Frame(settings_window)
         btn_frame.pack(fill=X, pady=10)
 
@@ -305,12 +272,10 @@ def create_gui():
         ttk.Button(btn_frame, text="Зберегти", command=save_and_close, bootstyle="success").pack(side=RIGHT, padx=10)
 
     def save_data_to_json():
-        """Зберігає tracked_data у JSON-файл."""
         if not tracked_data:
             show_warning_message("Увага", "Немає даних для збереження!")
             return
 
-        # Формуємо назву файлу: назва відео + датачас
         filepath = file_entry.get()
         if not filepath:
             show_warning_message("Помилка", "Будь ласка, виберіть відеофайл.")
@@ -320,7 +285,6 @@ def create_gui():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{video_name}_{timestamp}.json"
 
-        # Записуємо дані у файл
         try:
             with open(filename, "w", encoding="utf-8") as json_file:
                 json.dump(tracked_data, json_file, indent=4, ensure_ascii=False)
@@ -331,7 +295,6 @@ def create_gui():
 
     def update_table_worker():
 
-        """Фоновий потік для оновлення таблиці."""
         while True:  # Без перевірки stop_event
             try:
                 objects, frame_count, elapsed_time = data_queue.get(timeout=1)
@@ -340,8 +303,7 @@ def create_gui():
                 continue
 
     def update_table(objects, frame_count):
-        """Оновлення таблиці даними про об'єкти."""
-        pixel_to_mm = 0.1  # Коефіцієнт перетворення пікселів у мм
+        pixel_to_mm = 0.1
 
         existing_ids = {table.item(row)["values"][0] for row in table.get_children()}
 
@@ -349,18 +311,15 @@ def create_gui():
             x_pixel, y_pixel = data["coords"]
             x_mm, y_mm = x_pixel * pixel_to_mm, y_pixel * pixel_to_mm
 
-            # Обчислення переміщення (відстань від попереднього положення)
             prev_x, prev_y = data.get("prev_coords", (x_pixel, y_pixel))
             displacement = ((x_pixel - prev_x) ** 2 + (y_pixel - prev_y) ** 2) ** 0.5 * pixel_to_mm
-            data["prev_coords"] = (x_pixel, y_pixel)  # Оновлюємо попередні координати
+            data["prev_coords"] = (x_pixel, y_pixel)
 
-            # Середня швидкість
             average_velocity = data["total_velocity"] / data["velocity_count"] if data["velocity_count"] > 0 else 0
 
             if average_velocity == 0:
                 continue
 
-            # Оновити існуючий рядок або додати новий
             if obj_id in existing_ids:
                 for row in table.get_children():
                     if table.item(row)["values"][0] == obj_id:
@@ -387,14 +346,12 @@ def create_gui():
             })
 
     def select_video():
-        """Обробка вибору відеофайлу."""
         filepath = filedialog.askopenfilename(filetypes=[("Video Files", "*.mp4;*.avi;*.mkv")])
         if filepath:
             file_entry.delete(0, END)
             file_entry.insert(0, filepath)
 
     def start_video():
-        """Запуск відео в окремому потоці."""
         global is_playing, stop_event, tracked_data
         if is_playing:
             show_warning_message("Увага", "Відео вже запущено!")
@@ -478,14 +435,14 @@ def create_gui():
                             object_data[matched_id] = {
                                 "coords": (cx, cy),
                                 "velocity": 0,
-                                "total_velocity": 0,  # Ініціалізація сумарної швидкості
-                                "velocity_count": 0,  # Ініціалізація кількості швидкостей
+                                "total_velocity": 0,
+                                "velocity_count": 0,
                                 "start_time": current_time,
                                 "last_seen": current_time,
                                 "visible": False,
                             }
 
-                        # Оновлюємо інформацію про об'єкт
+
                         prev_coords = object_data[matched_id]["coords"]
                         distance = ((cx - prev_coords[0]) ** 2 + (cy - prev_coords[1]) ** 2) ** 0.5
                         velocity = distance * fps
@@ -495,7 +452,6 @@ def create_gui():
                             object_data[matched_id]["velocity"] = velocity
                             object_data[matched_id]["last_seen"] = current_time
 
-                            # Оновлення середньої швидкості
                             object_data[matched_id]["total_velocity"] += velocity
                             object_data[matched_id]["velocity_count"] += 1
 
@@ -541,7 +497,6 @@ def create_gui():
     threading.Thread(target=update_table_worker, daemon=True).start()
 
     def stop_video():
-        """Зупинка відтворення відео."""
         global is_playing, stop_event
 
         if not is_playing:
@@ -554,35 +509,32 @@ def create_gui():
         show_info_message("Зупинка", "Відтворення відео зупинено.")
         time.sleep(0.1)  # Коротка пауза для завершення потоків
 
-        # Очищуємо чергу перед наступним запуском
         while not data_queue.empty():
             try:
                 data_queue.get_nowait()
             except queue.Empty:
                 break
 
-        video_label.configure(image="")  # Очистити екран
+        video_label.configure(image="")
         print("Відео зупинено, черга очищена.")
 
     def show_about():
         messagebox.showinfo("Про програму", "Програма відстеження об'єктів у відео.\nВерсія 1.0")
 
     def on_close():
-        """Обробляє закриття головного вікна, зупиняє всі процеси та виходить з програми."""
         global is_playing, stop_event
 
         if messagebox.askyesno("Вихід", "Ви дійсно хочете вийти з програми?"):
-            stop_event.set()  # Зупинка потоків відео
+            stop_event.set()
             is_playing = False
 
-            # Очистити чергу перед виходом
             while not data_queue.empty():
                 try:
                     data_queue.get_nowait()
                 except queue.Empty:
                     break
 
-            app.destroy()  # Закриває головне вікно і завершує програму
+            app.destroy()
             os._exit(0)
 
     app = ttk.Window(themename="darkly")
@@ -590,11 +542,9 @@ def create_gui():
     app.geometry("1800x1000")
     app.protocol("WM_DELETE_WINDOW", on_close)
 
-    # Головний контейнер
     main_frame = ttk.Frame(app)
     main_frame.pack(fill=BOTH, expand=True, padx=10, pady=10)
 
-    # Верхній рядок з введенням відео і кнопками
     controls_frame = ttk.Frame(main_frame)
     controls_frame.pack(fill=X, pady=5)
 
@@ -610,15 +560,15 @@ def create_gui():
     stop_button = ttk.Button(controls_frame, text="Зупинити", bootstyle="danger", command=stop_video)
     stop_button.pack(side=LEFT, padx=5)
 
-    # Головний поділ: зліва таблиця, справа плеєр
+
     content_frame = ttk.Frame(main_frame)
     content_frame.pack(fill=BOTH, expand=True)
 
-    # Ліва панель (таблиця)
+
     left_frame = ttk.Frame(content_frame, width=800)
     left_frame.pack(side=LEFT, fill=BOTH, padx=5, pady=5)
 
-    # Таблиця для даних
+
     table = ttk.Treeview(left_frame,
                          columns=("Object_ID", "Frame", "X_mm", "Y_mm", "Displacement", "Velocity"),
                          show="headings")
@@ -630,7 +580,6 @@ def create_gui():
     table.heading("Displacement", text="Переміщення, мм")
     table.heading("Velocity", text="Швидкість, мм/с")
 
-    # Встановлення ширини колонок
     table.column("Object_ID", width=120)
     table.column("Frame", width=80)
     table.column("X_mm", width=120)
@@ -638,15 +587,12 @@ def create_gui():
     table.column("Displacement", width=120)
     table.column("Velocity", width=120)
 
-    # Розміщення таблиці
     table.pack(fill=BOTH, expand=True)
 
-    # Права панель (плеєр)
     right_frame = ttk.Frame(content_frame, relief="sunken", borderwidth=2, width=1000, height=800, style="TFrame")
     right_frame.pack(side=RIGHT, padx=20, pady=20)
     right_frame.pack_propagate(False)
 
-    # Плеєр для відео з чорним фоном
     video_label = ttk.Label(right_frame, background="black")
     video_label.pack(fill=BOTH, expand=True)
 
@@ -676,12 +622,8 @@ def create_gui():
     statistics_menu.add_command(label="Показати статистику", command=open_statistics)
     menubar.add_cascade(label="Статистика", menu=statistics_menu)
     menubar.add_cascade(label="Налаштування", menu=settings_menu)
-    # Запуск головного циклу інтерфейсу
-
-
     app.mainloop()
 
-# Запуск графічного інтерфейсу в окремому потоці
 if __name__ == "__main__":
     gui_thread = threading.Thread(target=create_gui)
     gui_thread.start()
