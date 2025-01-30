@@ -39,11 +39,27 @@ ax = None  # Глобальна змінна для осей графіка
 x_press, y_press = None, None  # Початкові координати натискання миші
 is_dragging = False
 
+def show_info_message(title, message):
+    """Відображає інформаційне повідомлення"""
+    messagebox.showinfo(title, message)
+
+
+def show_warning_message(title, message):
+    """Відображає попереджувальне повідомлення"""
+    messagebox.showwarning(title, message)
+
+
+def show_error_message(title, message):
+    """Відображає повідомлення про помилку"""
+    messagebox.showerror(title, message)
 
 def save_settings():
     """Зберігає налаштування у JSON-файл."""
-    with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(settings, f, indent=4, ensure_ascii=False)
+    try:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(settings, f, indent=4, ensure_ascii=False)
+    except Exception as e:
+        show_error_message("Помилка", f"Не вдалося зберегти налаштування.\n{str(e)}")
 
 
 def create_gui():
@@ -75,13 +91,15 @@ def create_gui():
             if not file_path:
                 return
 
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except json.JSONDecodeError:
+                show_error_message("Помилка", "Файл містить некоректні JSON-дані.")
+                return
 
             selected_type = graph_types[selected_graph.get()]
             plot_graph(data, selected_type)
-
-            # Закриваємо вікно вибору графіка
             stats_window.destroy()
 
         ttk.Button(stats_window, text="Побудувати графік", command=select_json_and_plot, bootstyle="success").pack(
@@ -286,17 +304,16 @@ def create_gui():
                                                                                                             padx=10)
         ttk.Button(btn_frame, text="Зберегти", command=save_and_close, bootstyle="success").pack(side=RIGHT, padx=10)
 
-
     def save_data_to_json():
         """Зберігає tracked_data у JSON-файл."""
         if not tracked_data:
-            print("Немає даних для збереження.")
+            show_warning_message("Увага", "Немає даних для збереження!")
             return
 
         # Формуємо назву файлу: назва відео + датачас
         filepath = file_entry.get()
         if not filepath:
-            print("Не вдалося отримати назву відео.")
+            show_warning_message("Помилка", "Будь ласка, виберіть відеофайл.")
             return
 
         video_name = filepath.split("/")[-1].split("\\")[-1].rsplit(".", 1)[0]
@@ -304,10 +321,13 @@ def create_gui():
         filename = f"{video_name}_{timestamp}.json"
 
         # Записуємо дані у файл
-        with open(filename, "w", encoding="utf-8") as json_file:
-            json.dump(tracked_data, json_file, indent=4, ensure_ascii=False)
+        try:
+            with open(filename, "w", encoding="utf-8") as json_file:
+                json.dump(tracked_data, json_file, indent=4, ensure_ascii=False)
+            show_info_message("Збережено", f"Дані успішно збережені у файл: {filename}")
+        except Exception as e:
+            show_error_message("Помилка", f"Не вдалося зберегти дані.\n{str(e)}")
 
-        print(f"Дані збережено у файл: {filename}")
 
     def update_table_worker():
 
@@ -377,12 +397,12 @@ def create_gui():
         """Запуск відео в окремому потоці."""
         global is_playing, stop_event, tracked_data
         if is_playing:
-            print("Відео вже запущено!")
+            show_warning_message("Увага", "Відео вже запущено!")
             return
         clear_graph()
         filepath = file_entry.get()
         if not filepath:
-            print("Будь ласка, виберіть файл відео.")
+            show_warning_message("Помилка", "Будь ласка, виберіть відеофайл.")
             return
 
         for row in table.get_children():
@@ -396,7 +416,7 @@ def create_gui():
             global is_playing
             cap = cv2.VideoCapture(filepath)
             if not cap.isOpened():
-                print(f"Не вдалося відкрити відео: {filepath}")
+                show_error_message("Помилка", f"Не вдалося відкрити відео: {filepath}")
                 is_playing = False
                 return
 
@@ -427,7 +447,7 @@ def create_gui():
             while cap.isOpened() and not stop_event.is_set():
                 ret, frame = cap.read()
                 if not ret:
-                    print("Відтворення завершено або помилка читання відео.")
+                    show_info_message("Відео завершено", "Відтворення відео завершено.")
                     break
 
                 fg_mask = back_sub.apply(frame)
@@ -525,13 +545,13 @@ def create_gui():
         global is_playing, stop_event
 
         if not is_playing:
-            print("Немає запущеного відео для зупинки.")
+            show_warning_message("Увага", "Немає запущеного відео для зупинки.")
             return
 
         print("Зупинка відео...")
         stop_event.set()  # Зупиняємо потік відео
         is_playing = False  # Скидаємо статус відтворення
-
+        show_info_message("Зупинка", "Відтворення відео зупинено.")
         time.sleep(0.1)  # Коротка пауза для завершення потоків
 
         # Очищуємо чергу перед наступним запуском
@@ -547,9 +567,28 @@ def create_gui():
     def show_about():
         messagebox.showinfo("Про програму", "Програма відстеження об'єктів у відео.\nВерсія 1.0")
 
+    def on_close():
+        """Обробляє закриття головного вікна, зупиняє всі процеси та виходить з програми."""
+        global is_playing, stop_event
+
+        if messagebox.askyesno("Вихід", "Ви дійсно хочете вийти з програми?"):
+            stop_event.set()  # Зупинка потоків відео
+            is_playing = False
+
+            # Очистити чергу перед виходом
+            while not data_queue.empty():
+                try:
+                    data_queue.get_nowait()
+                except queue.Empty:
+                    break
+
+            app.destroy()  # Закриває головне вікно і завершує програму
+            os._exit(0)
+
     app = ttk.Window(themename="darkly")
     app.title("Відстеження об'єктів у відео")
     app.geometry("1800x1000")
+    app.protocol("WM_DELETE_WINDOW", on_close)
 
     # Головний контейнер
     main_frame = ttk.Frame(app)
