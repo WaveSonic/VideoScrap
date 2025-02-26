@@ -69,8 +69,6 @@ def create_gui():
             "Переміщення об'єктів у часі": "displacement_mm",
             "Швидкість об'єктів у часі": "average_velocity_mm_s",
             "Траєкторія руху (X vs Y)": "trajectory",
-            "Гістограма швидкості": "hist_velocity",
-            "Гістограма переміщення": "hist_displacement"
         }
 
         selected_graph = ttk.StringVar(value=list(graph_types.keys())[0])
