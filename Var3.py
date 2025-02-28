@@ -11,6 +11,11 @@ import os
 from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from db import init_db, engine
+from sqlalchemy.orm import sessionmaker
+init_db()
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+db = SessionLocal()
 
 SETTINGS_FILE = "settings.json"
 default_settings = {
@@ -314,7 +319,7 @@ def create_gui():
             data["prev_coords"] = (x_pixel, y_pixel)
 
             average_velocity = data["total_velocity"] / data["velocity_count"] if data["velocity_count"] > 0 else 0
-
+            size_mm = data.get("size_mm", 0)
             if average_velocity == 0:
                 continue
 
@@ -324,14 +329,16 @@ def create_gui():
                         table.item(row, values=(
                             obj_id, frame_count,
                             round(x_mm, 3), round(y_mm, 3),
-                            round(displacement, 3), round(average_velocity, 3)
+                            round(displacement, 3), round(average_velocity, 3),
+                            round(size_mm, 3)
                         ))
                         break
             else:
                 table.insert("", "end", values=(
                     obj_id, frame_count,
                     round(x_mm, 3), round(y_mm, 3),
-                    round(displacement, 3), round(average_velocity, 3)
+                    round(displacement, 3), round(average_velocity, 3),
+                    round(size_mm, 3)
                 ))
             if obj_id not in tracked_data:
                 tracked_data[obj_id] = []
@@ -418,6 +425,8 @@ def create_gui():
                 for contour in contours:
                     if cv2.contourArea(contour) > 1000:
                         x, y, w, h = cv2.boundingRect(contour)
+                        pixel_to_mm = 0.1
+                        size_mm = (w * h) * pixel_to_mm
                         cx, cy = x + w // 2, y + h // 2
 
                         matched_id = None
@@ -432,6 +441,7 @@ def create_gui():
                             matched_id = f"ID_{object_id_counter}"
                             object_data[matched_id] = {
                                 "coords": (cx, cy),
+                                "size_mm": size_mm,
                                 "velocity": 0,
                                 "total_velocity": 0,
                                 "velocity_count": 0,
@@ -568,7 +578,7 @@ def create_gui():
 
 
     table = ttk.Treeview(left_frame,
-                         columns=("Object_ID", "Frame", "X_mm", "Y_mm", "Displacement", "Velocity"),
+                         columns=("Object_ID", "Frame", "X_mm", "Y_mm", "Displacement", "Velocity", "Size_mm"),
                          show="headings")
 
     table.heading("Object_ID", text="Назва об'єкта")
@@ -577,6 +587,7 @@ def create_gui():
     table.heading("Y_mm", text="Координата Y, мм")
     table.heading("Displacement", text="Переміщення, мм")
     table.heading("Velocity", text="Швидкість, мм/с")
+    table.heading("Size_mm", text="Розмір об'єкта, мм")
 
     table.column("Object_ID", width=120)
     table.column("Frame", width=80)
@@ -584,6 +595,7 @@ def create_gui():
     table.column("Y_mm", width=120)
     table.column("Displacement", width=120)
     table.column("Velocity", width=120)
+    table.column("Size_mm", width=120)
 
     table.pack(fill=BOTH, expand=True)
 
